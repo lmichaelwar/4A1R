@@ -140,6 +140,37 @@ class VoiceSynthesizer:
         self.voice_queue = Queue()
         self.voice_thread = None
         self.running = False
+        self.audio_player = self._detect_audio_player()
+        
+    def _detect_audio_player(self):
+        """Detect which audio player is available"""
+        if not self.enabled:
+            return None
+            
+        if os.name == 'posix':
+            if os.path.exists('/usr/bin/afplay'):
+                return "afplay (macOS)"
+            for player in ['mpg123', 'mpv', 'ffplay', 'paplay']:
+                if os.path.exists(f'/usr/bin/{player}'):
+                    return f"{player} (Linux)"
+        elif os.name == 'nt':
+            # Check for mpv on Windows
+            mpv_paths = [
+                'mpv',
+                r'C:\ProgramData\chocolatey\bin\mpv.exe',
+                r'C:\tools\mpv\mpv.exe',
+                os.path.expanduser(r'~\scoop\apps\mpv\current\mpv.exe'),
+                os.path.expanduser(r'~\AppData\Local\Programs\mpv\mpv.exe'),
+            ]
+            for mpv_path in mpv_paths:
+                try:
+                    result = subprocess.run([mpv_path, '--version'], capture_output=True, timeout=1)
+                    if result.returncode == 0:
+                        return "mpv (Windows)"
+                except:
+                    continue
+            return "Windows Media Player (fallback)"
+        return "unknown"
         
     def start(self):
         """Start the voice synthesis thread"""
@@ -149,7 +180,7 @@ class VoiceSynthesizer:
         self.running = True
         self.voice_thread = threading.Thread(target=self._voice_worker, daemon=True)
         self.voice_thread.start()
-        print("Voice synthesis enabled. The room speaks.")
+        print(f"Voice synthesis enabled using {self.audio_player}. The room speaks.")
         
     def _voice_worker(self):
         """Background thread that processes voice queue"""
@@ -195,9 +226,45 @@ class VoiceSynthesizer:
                                     subprocess.run([player, tmp_file.name], capture_output=True)
                                 break
                 elif os.name == 'nt':  # Windows
-                    # Use Windows Media Player
-                    os.system(f'start /min wmplayer {tmp_file.name}')
-                    time.sleep(3)  # Give it time to play
+                    # First try mpv (likely installed via chocolatey or scoop)
+                    mpv_played = False
+                    
+                    # Check common mpv locations
+                    mpv_paths = [
+                        'mpv',  # In PATH
+                        r'C:\ProgramData\chocolatey\bin\mpv.exe',  # Chocolatey
+                        r'C:\tools\mpv\mpv.exe',  # Common manual install
+                        os.path.expanduser(r'~\scoop\apps\mpv\current\mpv.exe'),  # Scoop
+                        os.path.expanduser(r'~\AppData\Local\Programs\mpv\mpv.exe'),  # Local install
+                    ]
+                    
+                    for mpv_path in mpv_paths:
+                        try:
+                            # Try to run mpv with minimal UI
+                            result = subprocess.run(
+                                [mpv_path, '--really-quiet', '--no-video', tmp_file.name],
+                                capture_output=True,
+                                timeout=10
+                            )
+                            if result.returncode == 0:
+                                mpv_played = True
+                                break
+                        except (FileNotFoundError, subprocess.TimeoutExpired):
+                            continue
+                    
+                    # Fall back to Windows Media Player if mpv didn't work
+                    if not mpv_played:
+                        try:
+                            # Try using Windows' built-in playback (Windows 10+)
+                            subprocess.run(
+                                ['powershell', '-Command', f'(New-Object Media.SoundPlayer "{tmp_file.name}").PlaySync()'],
+                                capture_output=True,
+                                timeout=10
+                            )
+                        except:
+                            # Ultimate fallback: ancient Windows Media Player
+                            os.system(f'start /min wmplayer {tmp_file.name}')
+                            time.sleep(3)  # Give it time to play
                     
                 # Clean up
                 os.unlink(tmp_file.name)

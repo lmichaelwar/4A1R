@@ -42,7 +42,34 @@ def test_voices():
                         except FileNotFoundError:
                             continue
                 elif sys.platform == "win32":
-                    os.system(f'start /min wmplayer {tmp.name}')
+                    # Try mpv first (from chocolatey/scoop/etc)
+                    played = False
+                    mpv_paths = [
+                        'mpv',  # In PATH
+                        r'C:\ProgramData\chocolatey\bin\mpv.exe',
+                        r'C:\tools\mpv\mpv.exe',
+                        os.path.expanduser(r'~\scoop\apps\mpv\current\mpv.exe'),
+                        os.path.expanduser(r'~\AppData\Local\Programs\mpv\mpv.exe'),
+                    ]
+                    
+                    for mpv_path in mpv_paths:
+                        try:
+                            result = subprocess.run(
+                                [mpv_path, '--really-quiet', '--no-video', tmp.name],
+                                capture_output=True,
+                                timeout=5
+                            )
+                            if result.returncode == 0:
+                                played = True
+                                print(f"  ✓ Played with mpv")
+                                break
+                        except:
+                            continue
+                    
+                    if not played:
+                        # Fallback to Windows Media Player
+                        os.system(f'start /min wmplayer {tmp.name}')
+                        print(f"  ✓ Played with Windows Media Player (fallback)")
                 
                 os.unlink(tmp.name)
         
